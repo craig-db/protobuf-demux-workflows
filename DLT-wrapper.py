@@ -16,6 +16,9 @@ SR_URL = spark.conf.get("SR_URL")
 SR_API_KEY = spark.conf.get("SR_API_KEY")
 SR_API_SECRET = spark.conf.get("SR_API_SECRET")
 
+SOURCE = spark.conf.get("SOURCE")
+SCHEMA = spark.conf.get("SCHEMA")
+
 # COMMAND ----------
 
 schema_registry_options = {
@@ -52,18 +55,28 @@ def bronze_protobufs_dlt (
   partition_cols = "game_name",
   comment = "game-specific protobufs"
 ):
-  bronze_df = (
-    spark
+  if SOURCE == "Kafka":
+    bronze_df = (
+      spark
+        .readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_SERVER)
+        .option("kafka.security.protocol", "SASL_SSL")
+        .option("kafka.sasl.jaas.config", "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{}' password='{}';".format(KAFKA_KEY, KAFKA_SECRET))
+        .option("kafka.ssl.endpoint.identification.algorithm", "https")
+        .option("kafka.sasl.mechanism", "PLAIN")
+        .option("subscribe", KAFKA_TOPIC)
+        .option("mergeSchema", "true")
+        .load()
+        .select(from_protobuf("value", options = schema_registry_options)).alias("wrapper")
+      )
+  else:
+    bronze_df = (
+      spark
       .readStream
-      .format("kafka")
-      .option("kafka.bootstrap.servers", KAFKA_SERVER)
-      .option("kafka.security.protocol", "SASL_SSL")
-      .option("kafka.sasl.jaas.config", "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{}' password='{}';".format(KAFKA_KEY, KAFKA_SECRET))
-      .option("kafka.ssl.endpoint.identification.algorithm", "https")
-      .option("kafka.sasl.mechanism", "PLAIN")
-      .option("subscribe", KAFKA_TOPIC)
-      .option("mergeSchema", "true")
-      .load()
-      .select(from_protobuf("value", options = schema_registry_options)).alias("wrapper")
-    )
+      .format("delta")
+      .table(f"{SCHEMA}.wrapper")
+      .select(from_protobuf("wrapper", options = schema_registry_options)).alias("wrapper")
+    )    
+    
   return bronze_df.select("wrapper.*")
