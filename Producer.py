@@ -20,7 +20,7 @@ nrec = [str(i) for i in range(10, 110, 10)]
 dbutils.widgets.dropdown(name="num_destinations", label="Number of Target Delta tables", defaultValue="5", choices=ndd)
 dbutils.widgets.dropdown(name="num_versions", label="Number of Versions to Produce", defaultValue="5", choices=vdd)
 dbutils.widgets.dropdown(name="num_records", label="Number of Records to Produce per Version", defaultValue="10", choices=nrec)
-dbutils.widgets.dropdown(name="destination", label="Destination", defaultValue="Delta", choices=["Delta", "Kafka"])
+dbutils.widgets.dropdown(name="destination", label="Destination", defaultValue="Kafka", choices=["Delta", "Kafka"])
 dbutils.widgets.dropdown(name="clean_up", label="clean_up", defaultValue="No", choices=["Yes", "No"])
 
 # COMMAND ----------
@@ -134,6 +134,11 @@ if CLEAN_UP == "Yes":
   t_list = [key for key in t_topics]
   if len(t_list) > 0:
     admin_client.delete_topics(t_list)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Proceed if you wish to create topics, schemas and publish messages...
 
 # COMMAND ----------
 

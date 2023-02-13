@@ -1,10 +1,13 @@
 # Databricks notebook source
+# DBTITLE 1,Library for interacting with the Databricks API
 # MAGIC %pip install databricks_cli
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Run the Producer notebook before running this notebook. The Producer will set up the game names. Those are needed so that the destination tables can be deteremined and the workflow tasks can be created.
+# MAGIC # Important
+# MAGIC 1. Run the Producer notebook before running this notebook. The Producer will set up the game names. Those are needed so that the destination tables can be deteremined and the workflow tasks can be created.
+# MAGIC 2. Run this notebook cell-by-cell. Widgets will appear that will allow you to set the source for the stream (Delta or Kafka) as well as the number of streams per cluster. The job consuming the main stream will have its own cluster.
 
 # COMMAND ----------
 
@@ -12,15 +15,17 @@
 
 # COMMAND ----------
 
-dbutils.widgets.dropdown(name="tables_per_deserializer", label="tables_per_deserializer", defaultValue="30", choices=["3", "10", "20", "30", "40"])
+dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="30", choices=["3", "10", "20", "30", "40"])
+dbutils.widgets.dropdown(name="destination", label="Stream Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
 
 # COMMAND ----------
 
 tables_per_deserializer = int(dbutils.widgets.get("tables_per_deserializer"))
+MODE = dbutils.widgets.get("destination")
 
 # COMMAND ----------
 
-# DBTITLE 1,Delta Live Pipeline name will be "Protobuf Example_<your user>"
+# DBTITLE 1,The Workflow name will be "Game_Protobufs_wrapper_<your username>"
 my_name = spark.sql("select current_user()").collect()[0][0]
 FAILURE_EMAIL = my_name
 my_name = my_name[:my_name.rfind('@')].replace(".", "_")
@@ -63,7 +68,7 @@ jobs_api = JobsApi(api_client)
 
 # COMMAND ----------
 
-# DBTITLE 1,Build the path to the DLT notebook by using the path of this notebook.
+# DBTITLE 1,Build the path to the Workflow's notebook by using the path of this notebook
 deser_nb_path = nb_context.notebookPath().getOrElse(None).replace("Install_Workflow", "Workflow-deserializer")
 wrapper_nb_path = nb_context.notebookPath().getOrElse(None).replace("Install_Workflow", "Workflow-wrapper")
 
@@ -87,7 +92,7 @@ for cluster_id in range(0, num_deserializer_clusters):
               },
               "source": "WORKSPACE"
           },
-          "job_cluster_key": f"Shared_job_cluster_{cluster_id+1}",
+          "job_cluster_key": f"Silver_job_cluster_{cluster_id+1}",
           "max_retries": 2,
           "min_retry_interval_millis": 900000,
           "retry_on_timeout": False,
@@ -104,7 +109,7 @@ for cluster_id in range(0, num_deserializer_clusters):
     
   cluster_config = [
     {
-          "job_cluster_key": f"Shared_job_cluster_{cluster_id+1}",
+          "job_cluster_key": f"Silver_job_cluster_{cluster_id+1}",
           "new_cluster": {
               "cluster_name": "",
               "spark_version": "12.1.x-scala2.12",
@@ -150,9 +155,12 @@ job_settings = {
                 "task_key": "kafka_consumer",
                 "notebook_task": {
                     "notebook_path": f"{wrapper_nb_path}",
-                    "source": "WORKSPACE"
+                    "source": "WORKSPACE",
+                    "base_parameters": {
+                      "source": f"{MODE}"
+                    },
                 },
-                "job_cluster_key": "Shared_job_cluster_0",
+                "job_cluster_key": "KafkaConsumer_job_cluster_0",
                 "max_retries": 2,
                 "min_retry_interval_millis": 900000,
                 "retry_on_timeout": False,
@@ -166,7 +174,7 @@ job_settings = {
         ],
         "job_clusters": cluster_configs + [
             {
-                "job_cluster_key": "Shared_job_cluster_0",
+                "job_cluster_key": "KafkaConsumer_job_cluster_0",
                 "new_cluster": {
                     "cluster_name": "",
                     "spark_version": "12.1.x-scala2.12",
@@ -207,24 +215,9 @@ print(json.dumps(job_settings, indent=4))
 
 # COMMAND ----------
 
-# DBTITLE 1,Use Databricks API to register and start the DLT Pipeline
+# DBTITLE 1,Use Databricks API to register the workflow
 retval = jobs_api.create_job(json=job_settings["settings"])
 
 # COMMAND ----------
 
 print(retval)
-
-# COMMAND ----------
-
-x = [1,2,3]
-y = {
-  "arr": x + [4,5,6]
-}
-
-# COMMAND ----------
-
-y
-
-# COMMAND ----------
-
-
