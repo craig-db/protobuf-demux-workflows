@@ -21,11 +21,7 @@ dbutils.widgets.dropdown(name="num_destinations", label="Number of Target Delta 
 dbutils.widgets.dropdown(name="num_versions", label="Number of Versions to Produce", defaultValue="5", choices=vdd)
 dbutils.widgets.dropdown(name="num_records", label="Number of Records to Produce per Version", defaultValue="10", choices=nrec)
 dbutils.widgets.dropdown(name="destination", label="Destination", defaultValue="Delta", choices=["Delta", "Kafka"])
-
-# COMMAND ----------
-
-spark.sql(f"drop database if exists {schema} cascade")
-spark.sql(f"create database {schema}")
+dbutils.widgets.dropdown(name="clean_up", label="clean_up", defaultValue="No", choices=["Yes", "No"])
 
 # COMMAND ----------
 
@@ -34,8 +30,14 @@ NUM_VERSIONS=int(dbutils.widgets.get("num_versions"))
 NUM_RECORDS_PER_VERSION=int(dbutils.widgets.get("num_records"))
 NUM_TARGET_TABLES=int(dbutils.widgets.get("num_destinations"))
 MODE = dbutils.widgets.get("destination")
-
+CLEAN_UP = dbutils.widgets.get("clean_up")
 print(f"This run will produce {NUM_RECORDS_PER_VERSION} messages for each of the {NUM_VERSIONS} versions, for {NUM_TARGET_TABLES} tables")
+
+# COMMAND ----------
+
+if CLEAN_UP == "Yes":
+  spark.sql(f"drop database if exists {schema} cascade")
+  spark.sql(f"create database {schema}")
 
 # COMMAND ----------
 
@@ -60,8 +62,30 @@ GAMES_ARRAY = [f"{str(fake.first_name()).lower()}_game" for i in range(0, NUM_TA
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Create a notebook "Secrets" and set these variables:
+# MAGIC * SR_URL="https://setme.confluent.cloud"
+# MAGIC * SR_API_KEY="setme"
+# MAGIC * SR_API_SECRET="setme"
+# MAGIC * KAFKA_KEY="setme"
+# MAGIC * KAFKA_SECRET="setme"
+# MAGIC * KAFKA_SERVER="setme.confluent.cloud:9092"
+# MAGIC * KAFKA_TOPIC = "app-events"
+# MAGIC * WRAPPER_TOPIC = "wrapper"
+
+# COMMAND ----------
+
 # DBTITLE 1,Get Confluent Registry and Kafka related secrets
 # MAGIC %run "./Secrets"
+
+# COMMAND ----------
+
+print(f"CHECKPOINT_LOCATION: {CHECKPOINT_LOCATION}")
+
+# COMMAND ----------
+
+if CLEAN_UP == "Yes":
+  dbutils.fs.rm(CHECKPOINT_LOCATION, True)
 
 # COMMAND ----------
 
@@ -96,18 +120,20 @@ admin_client = AdminClient(kafka_config)
 
 # COMMAND ----------
 
-schema_registry_client = SchemaRegistryClient(schema_registry_conf)
-subjects = schema_registry_client.get_subjects()
-for subject in subjects:
-  schema_registry_client.delete_subject(subject, True)
+if CLEAN_UP == "Yes":
+  schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+  subjects = schema_registry_client.get_subjects()
+  for subject in subjects:
+    schema_registry_client.delete_subject(subject, True)
 
 # COMMAND ----------
 
-t_dict = admin_client.list_topics()
-t_topics = t_dict.topics
-t_list = [key for key in t_topics]
-if len(t_list) > 0:
-  admin_client.delete_topics(t_list)
+if CLEAN_UP == "Yes":
+  t_dict = admin_client.list_topics()
+  t_topics = t_dict.topics
+  t_list = [key for key in t_topics]
+  if len(t_list) > 0:
+    admin_client.delete_topics(t_list)
 
 # COMMAND ----------
 
@@ -213,6 +239,7 @@ for version in range(1, NUM_VERSIONS):
     sr_conf["schema.registry.subject"] = f"{WRAPPER_TOPIC}-value"
     df = df.withColumn("wrapper", to_protobuf("inner_payload", options = sr_conf))
     df = df.select(["game_name", "wrapper"])
+    df.printSchema()
     (df
        .write
        .format("delta")
@@ -220,6 +247,24 @@ for version in range(1, NUM_VERSIONS):
        .partitionBy("game_name")
        .saveAsTable(f"{schema}.wrapper")
     )
+    if MODE == "Kafka":
+      print("publishing to Kafka")
+      df = spark.readStream.table(f"{schema}.wrapper")
+      (df
+         .selectExpr("game_name as key", "CAST(wrapper AS STRING) as value")
+         .writeStream
+         .format("kafka")
+         .queryName(f"publish version {version} for topic {target}")
+         .option("checkpointLocation", CHECKPOINT_LOCATION)
+         .option("topic", WRAPPER_TOPIC)
+         .option("kafka.bootstrap.servers", KAFKA_SERVER)
+         .option("kafka.security.protocol", "SASL_SSL")
+         .option("kafka.sasl.jaas.config", "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{}' password='{}';".format(KAFKA_KEY, KAFKA_SECRET))
+         .option("kafka.ssl.endpoint.identification.algorithm", "https")
+         .option("kafka.sasl.mechanism", "PLAIN")
+         .trigger(availableNow=True)
+         .start()
+      )
 
 # COMMAND ----------
 
@@ -228,7 +273,3 @@ display(spark.sql(f"select * from {schema}.wrapper"))
 # COMMAND ----------
 
 display(spark.sql(f"select game_name, count(*) from {schema}.wrapper group by game_name"))
-
-# COMMAND ----------
-
-
