@@ -204,7 +204,7 @@ latest_version = 0
 for version in range(1, NUM_VERSIONS):
   for target in range(1, NUM_TARGET_TABLES): # Starting at 1 because Confluent is free for 10 partitions; one needed for wrapper topic/schema
     latest_version = max(version, latest_version)
-    print(version)
+    print(latest_version)
     sr_conf = schema_registry_options.copy()
 
     sr_conf["schema.registry.subject"] = f"{GAMES_ARRAY[target]}-value"
