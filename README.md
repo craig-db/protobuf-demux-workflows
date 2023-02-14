@@ -4,7 +4,7 @@
 
 ## Overview
 This [example repo](https://github.com/craig-db/protobuf-demux-workflows) demonstrates a demux pattern where the incoming payload (either from Kafka or Delta) has the following structure:
-1. A "wrapper" protobuf message consisting of the following fields
+1. A "wrapper" protobuf message consisting of the following fields: game_name, schema_id, payload
 2. Within the wrapper's payload, a game-specific payload
 
 ### Wrapper Protobuf
