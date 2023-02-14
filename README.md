@@ -1,5 +1,7 @@
 # Consuming Protobuf with an Evolving Schema 
 
+![Overview Databricks Lakehouse Architecture depicting Kafka, Schema Registry, Delta Lake, and Workflows](./resources/overview.png)
+
 ## Overview
 This [example repo](https://github.com/craig-db/protobuf-demux-workflows) demonstrates a demux pattern where the incoming payload (either from Kafka or Delta) has the following structure:
 1. A "wrapper" protobuf message consisting of the following fields
