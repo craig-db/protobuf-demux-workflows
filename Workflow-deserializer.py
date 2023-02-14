@@ -38,7 +38,7 @@ import time
 
 # Sleep aims to allow the main Kafka consumer job to start first. 
 # That job sets up the source table for this notebook.
-time.sleep(60)
+time.sleep(90)
 
 # COMMAND ----------
 

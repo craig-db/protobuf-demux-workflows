@@ -151,11 +151,11 @@ def get_inner_records(game_name, num_records, num_versions):
   
   # Spark schema
   schema_arr = [f"game_name: STRING", "user_name: STRING", 
-                "event_timestamp: TIMESTAMP", "is_connection_stable: BOOLEAN"]
+                "event_timestamp: TIMESTAMP", "is_connection_stable: STRING"]
   # Protobuf schema
   proto_schema_arr = ["string game_name =1;", "string user_name =2;", 
                       "google.protobuf.Timestamp event_timestamp =3;", 
-                      "bool is_connection_stable =4;"]
+                      "string is_connection_stable =4;"]
 
   # To simulate schema evolution, newer versions get an additional column added
   for v in range(0, num_versions):
@@ -183,12 +183,15 @@ def get_inner_records(game_name, num_records, num_versions):
   # Generate some fake data
   for r in range(0, num_records):
     user_name = fake.user_name()
+    is_stable = "Y"
+    if (user_name[0] == "c"):
+        is_stable = "N"
     record = {
       "event" : {
         "game_name": game_name,
         "user_name": user_name,
         "event_timestamp": datetime.now(),
-        "is_connection_stable" : (user_name[0] == "c")
+        "is_connection_stable" : is_stable
       }
     }
     # Fake data for the "evolved" versions of the schema:
