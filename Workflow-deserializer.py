@@ -1,12 +1,10 @@
 # Databricks notebook source
-# MAGIC %run "./Secrets"
-
-# COMMAND ----------
-
+# DBTITLE 1,Common settings
 # MAGIC %run "./Common"
 
 # COMMAND ----------
 
+# DBTITLE 1,Set up widgets (parameters) for the notebook
 dbutils.widgets.text(name="game_name", label="game_name", defaultValue="kimberly_game")
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint_drop_destination", defaultValue="No", choices=["Yes", "No"])
 
@@ -21,26 +19,8 @@ checkpoint_location = f"{CHECKPOINT_LOCATION}/{game_name}_checkpoint"
 
 # COMMAND ----------
 
-schema_registry_options = {
-  "schema.registry.subject" : f"{game_name}-value",
-  "schema.registry.address" : f"{SR_URL}",
-  "confluent.schema.registry.basic.auth.credentials.source" : "USER_INFO",
-  "confluent.schema.registry.basic.auth.user.info" : f"{SR_API_KEY}:{SR_API_SECRET}"
-}
-
-schema_registry_conf = {
-    'url': SR_URL,
-    'basic.auth.user.info': '{}:{}'.format(SR_API_KEY, SR_API_SECRET)
-}
-
-kafka_config = {
-  "bootstrap.servers": f"{KAFKA_SERVER}",
-  "security.protocol": "SASL_SSL",
-  "sasl.mechanisms": "PLAIN",
-  "sasl.username": f"{KAFKA_KEY}",
-  "sasl.password": f"{KAFKA_SECRET}",
-  "session.timeout.ms": "45000"
-} 
+# DBTITLE 1,Game-specific protobuf registry topic
+schema_registry_options["schema.registry.subject"] = f"{game_name}-value"
 
 # COMMAND ----------
 
@@ -53,10 +33,15 @@ if reset_checkpoint == "Yes":
 
 from pyspark.sql.protobuf.functions import from_protobuf
 from pyspark.sql.functions import current_timestamp, lit, col
+import time
+
+# Sleep aims to allow the main Kafka consumer job to start first. 
+# That job sets up the source table for this notebook.
+time.sleep(60)
 
 # COMMAND ----------
 
-# DBTITLE 1,Gold table with the transformed protobuf messages, surfaced in a Delta table
+# DBTITLE 1,Silver table with the transformed protobuf messages
 silver_df = (
   spark
   .readStream
@@ -75,6 +60,7 @@ silver_df.printSchema()
 
 # COMMAND ----------
 
+# DBTITLE 1,Save as Delta
 (silver_df
    .writeStream
    .format("delta")

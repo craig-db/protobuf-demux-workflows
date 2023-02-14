@@ -7,10 +7,6 @@
 
 # COMMAND ----------
 
-# MAGIC %run "./Secrets"
-
-# COMMAND ----------
-
 # MAGIC %run "./Common"
 
 # COMMAND ----------
@@ -52,7 +48,7 @@ REGISTERED_TOPICS = {}
 # COMMAND ----------
 
 from faker import Faker
-from pyspark.sql.functions import *
+from pyspark.sql.functions import col
 from pyspark.sql.protobuf.functions import to_protobuf
 from pyspark.sql.types import BinaryType
 from datetime import datetime
@@ -72,30 +68,6 @@ print(f"CHECKPOINT_LOCATION: {CHECKPOINT_LOCATION}")
 
 if CLEAN_UP == "Yes":
   dbutils.fs.rm(CHECKPOINT_LOCATION, True)
-
-# COMMAND ----------
-
-# DBTITLE 1,Prepare config dictionaries, as expected by the confluent library
-schema_registry_options = {
-  "schema.registry.subject" : f"{KAFKA_TOPIC}-value",
-  "schema.registry.address" : f"{SR_URL}",
-  "confluent.schema.registry.basic.auth.credentials.source" : "USER_INFO",
-  "confluent.schema.registry.basic.auth.user.info" : f"{SR_API_KEY}:{SR_API_SECRET}"
-}
-
-schema_registry_conf = {
-    'url': SR_URL,
-    'basic.auth.user.info': '{}:{}'.format(SR_API_KEY, SR_API_SECRET)
-}
-
-kafka_config = {
-  "bootstrap.servers": f"{KAFKA_SERVER}",
-  "security.protocol": "SASL_SSL",
-  "sasl.mechanisms": "PLAIN",
-  "sasl.username": f"{KAFKA_KEY}",
-  "sasl.password": f"{KAFKA_SECRET}",
-  "session.timeout.ms": "45000"
-}  
 
 # COMMAND ----------
 
@@ -140,7 +112,10 @@ def register_topic(topic):
 def register_schema(topic, schema):
   schema_registry_client = SchemaRegistryClient(schema_registry_conf)
   k_schema = Schema(schema, "PROTOBUF", list())
-  return int(schema_registry_client.register_schema(f"{topic}-value", k_schema))
+  schema_id = int(schema_registry_client.register_schema(f"{topic}-value", k_schema))
+  schema_registry_client.set_compatibility(subject_name=f"{topic}-value", level="FULL")
+
+  return schema_id
 
 # COMMAND ----------
 
@@ -176,7 +151,7 @@ def get_inner_records(game_name, num_records, num_versions):
   
   for v in range(0, num_versions):
     schema_arr.append(f"col_{game_name}_{v}: STRING") 
-    proto_schema_arr.append(f"string col_{game_name}_{v} ={int(v + 5)};") 
+    proto_schema_arr.append(f"optional string col_{game_name}_{v} ={int(v + 5)};") 
 
   proto_schema_str = str("\n".join(proto_schema_arr))
   proto_schema_str = f"""syntax = "proto3";
@@ -215,17 +190,29 @@ def get_inner_records(game_name, num_records, num_versions):
 
 # COMMAND ----------
 
+# Protobuf is already compressed (note: we're assuming uncompressed parquet with protobuf
+# contents is faster. To be sure, perform some benchmarking!)
+spark.conf.set("spark.sql.parquet.compression.codec", "uncompressed")
+
+# COMMAND ----------
+
+latest_version = 0
+
+# COMMAND ----------
+
 # DBTITLE 1,Send simulated payload messages (with evolving schema) to Kafka
 for version in range(1, NUM_VERSIONS):
   for target in range(1, NUM_TARGET_TABLES): # Starting at 1 because Confluent is free for 10 partitions; one needed for wrapper topic/schema
+    latest_version = max(version, latest_version)
     print(version)
     sr_conf = schema_registry_options.copy()
 
     sr_conf["schema.registry.subject"] = f"{GAMES_ARRAY[target]}-value"
-    df = get_inner_records(GAMES_ARRAY[target], NUM_RECORDS_PER_VERSION, version)
+    df = get_inner_records(GAMES_ARRAY[target], NUM_RECORDS_PER_VERSION, latest_version)
     df = df.withColumn("game_name", col("event.game_name"))
     df = df.withColumn("payload", to_protobuf("event", options = sr_conf))
     df = df.selectExpr("game_name", "struct(game_name, schema_id, payload) as inner_payload")
+    df.printSchema()
     
     sr_conf["schema.registry.subject"] = f"{WRAPPER_TOPIC}-value"
     df = df.withColumn("wrapper", to_protobuf("inner_payload", options = sr_conf))
@@ -245,7 +232,7 @@ for version in range(1, NUM_VERSIONS):
          .selectExpr("game_name as key", "CAST(wrapper AS STRING) as value")
          .writeStream
          .format("kafka")
-         .queryName(f"publish version {version} for topic {target}")
+         .queryName(f"publish version {latest_version} for topic {target}")
          .option("checkpointLocation", CHECKPOINT_LOCATION)
          .option("topic", WRAPPER_TOPIC)
          .option("kafka.bootstrap.servers", KAFKA_SERVER)

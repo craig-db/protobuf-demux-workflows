@@ -1,8 +1,4 @@
 # Databricks notebook source
-# MAGIC %run "./Secrets"
-
-# COMMAND ----------
-
 # MAGIC %run "./Common"
 
 # COMMAND ----------
@@ -30,26 +26,8 @@ if reset_checkpoint == "Yes":
 
 # COMMAND ----------
 
-schema_registry_options = {
-  "schema.registry.subject" : f"{WRAPPER_TOPIC}-value",
-  "schema.registry.address" : f"{SR_URL}",
-  "confluent.schema.registry.basic.auth.credentials.source" : "USER_INFO",
-  "confluent.schema.registry.basic.auth.user.info" : f"{SR_API_KEY}:{SR_API_SECRET}"
-}
-
-schema_registry_conf = {
-    'url': SR_URL,
-    'basic.auth.user.info': '{}:{}'.format(SR_API_KEY, SR_API_SECRET)
-}
-
-kafka_config = {
-  "bootstrap.servers": f"{KAFKA_SERVER}",
-  "security.protocol": "SASL_SSL",
-  "sasl.mechanisms": "PLAIN",
-  "sasl.username": f"{KAFKA_KEY}",
-  "sasl.password": f"{KAFKA_SECRET}",
-  "session.timeout.ms": "45000"
-} 
+# DBTITLE 1,Wrapper protobuf registry topic
+schema_registry_options["schema.registry.subject"] = f"{WRAPPER_TOPIC}-value"
 
 # COMMAND ----------
 
@@ -58,7 +36,13 @@ from pyspark.sql.functions import current_timestamp, lit
 
 # COMMAND ----------
 
-# DBTITLE 1,Gold table with the transformed protobuf messages, surfaced in a Delta table
+# Protobuf is already compressed (note: we're assuming uncompressed parquet with protobuf
+# contents is faster. To be sure, perform some benchmarking!)
+spark.conf.set("spark.sql.parquet.compression.codec", "uncompressed")
+
+# COMMAND ----------
+
+# DBTITLE 1,Bronze table with the outer protobuf deserialized. Inner protobuf stored in payload.
 if source == "Kafka":
   bronze_df = (
     spark
@@ -94,6 +78,7 @@ bronze_df.printSchema()
 
 # COMMAND ----------
 
+# DBTITLE 1,Save as Delta
 (bronze_df
    .writeStream
    .format("delta")

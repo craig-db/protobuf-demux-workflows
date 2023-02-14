@@ -94,7 +94,7 @@ for cluster_id in range(0, num_deserializer_clusters):
           },
           "job_cluster_key": f"Silver_job_cluster_{cluster_id+1}",
           "max_retries": 2,
-          "min_retry_interval_millis": 900000,
+          "min_retry_interval_millis": 30000,
           "retry_on_timeout": False,
           "timeout_seconds": 0,
           "email_notifications": {
@@ -221,3 +221,11 @@ retval = jobs_api.create_job(json=job_settings["settings"])
 # COMMAND ----------
 
 print(retval)
+
+# COMMAND ----------
+
+print(jobs_api.run_now(retval["job_id"], jar_params=None, notebook_params=None, python_params=None, spark_submit_params=None))
+
+# COMMAND ----------
+
+
