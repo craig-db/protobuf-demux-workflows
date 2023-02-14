@@ -15,6 +15,7 @@ game_name = dbutils.widgets.get("game_name")
 
 # COMMAND ----------
 
+# DBTITLE 1,Checkpoint setting is used for the sink to ensure the stream can be restarted
 checkpoint_location = f"{CHECKPOINT_LOCATION}/{game_name}_checkpoint"
 
 # COMMAND ----------
@@ -41,7 +42,7 @@ time.sleep(60)
 
 # COMMAND ----------
 
-# DBTITLE 1,Silver table with the transformed protobuf messages
+# DBTITLE 1,Read the bronze table that consists of the inner protobuf payload
 silver_df = (
   spark
   .readStream
@@ -60,7 +61,7 @@ silver_df.printSchema()
 
 # COMMAND ----------
 
-# DBTITLE 1,Save as Delta
+# DBTITLE 1,Save as Delta (after deserializing the protobuf payload)
 (silver_df
    .writeStream
    .format("delta")

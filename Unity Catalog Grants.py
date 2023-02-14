@@ -14,17 +14,7 @@ spark.sql(f"REVOKE ALL PRIVILEGES ON SCHEMA {catalog}.{schema} FROM `{restricted
 
 # COMMAND ----------
 
-# DBTITLE 1,Allow Usage
+# DBTITLE 1,Allow Usage and select
 spark.sql(f"GRANT USAGE ON CATALOG {catalog} TO `{restricted_user}`")
-
-# COMMAND ----------
-
 spark.sql(f"GRANT USAGE ON SCHEMA {catalog}.{schema} TO `{restricted_user}`")
-
-# COMMAND ----------
-
 spark.sql(f"GRANT SELECT ON TABLE {catalog}.{schema}.silver_christopher_game_wf TO `{restricted_user}`")
-
-# COMMAND ----------
-
-

@@ -3,18 +3,21 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Create widgets for the Kafka consumer variables
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint_drop_destination", defaultValue="No", choices=["Yes", "No"])
 dbutils.widgets.dropdown(name="starting_offset", label="starting_offset", defaultValue="earliest", choices=["earliest", "latest"])
 dbutils.widgets.dropdown(name="source", label="Source", defaultValue="Delta", choices=["Delta", "Kafka"])
 
 # COMMAND ----------
 
+# DBTITLE 1,Retrieve widget values
 reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 starting_offset = dbutils.widgets.get("starting_offset")
 source = dbutils.widgets.get("source")
 
 # COMMAND ----------
 
+# DBTITLE 1,Checkpoint setting is used for the sink to ensure the stream can be restarted
 checkpoint_location = f"{CHECKPOINT_LOCATION}/wrapper_checkpoint"
 
 # COMMAND ----------
@@ -36,13 +39,7 @@ from pyspark.sql.functions import current_timestamp, lit
 
 # COMMAND ----------
 
-# Protobuf is already compressed (note: we're assuming uncompressed parquet with protobuf
-# contents is faster. To be sure, perform some benchmarking!)
-spark.conf.set("spark.sql.parquet.compression.codec", "uncompressed")
-
-# COMMAND ----------
-
-# DBTITLE 1,Bronze table with the outer protobuf deserialized. Inner protobuf stored in payload.
+# DBTITLE 1,Bronze source consists of the wrapper protobuf
 if source == "Kafka":
   bronze_df = (
     spark
@@ -78,7 +75,7 @@ bronze_df.printSchema()
 
 # COMMAND ----------
 
-# DBTITLE 1,Save as Delta
+# DBTITLE 1,Save the inner protobuf payload into a bronze table
 (bronze_df
    .writeStream
    .format("delta")
@@ -88,7 +85,3 @@ bronze_df.printSchema()
    .queryName(f"from_protobuf bronze_df into {schema}")
    .toTable(f"{catalog}.{schema}.bronze_protobufs_wf")
 )
-
-# COMMAND ----------
-
-

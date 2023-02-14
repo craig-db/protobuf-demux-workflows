@@ -38,9 +38,9 @@ The payload protobufs have their own schema with an evolving set of columns, e.g
 ## Instructions
 1. Set the Kafka and Schema Registry parameters in the "Secrets" notebook. See the "Important" note below in order to follow best practices.
 2. Run the Producer notebook. You can choose if you want to write to Delta or to Kafka. Remember this for step 3. There are other parameters that you can set too (e.g. how many "games" to simulate; each game will get its own schema).
-3. Run the Install_Workflow notebook after the Producer notebook has completed its first run.
-4. Go to Workflows in the Databricks platform, find the workflow named "Game_Protobufs_wrapper_<your name>" and start it. Note: the initial run may result in failures (if reading from Kafka). This is because the bronze table may not yet exist. The Workflow's tasks will retry, however, and then the tasks should proceed.
-5. In the Producer notebook, you can re-run the cell with the title "Send simulated payload messages (with evolving schema) to Kafka" to send more messages. Do not re-run the entire notebook.
+3. Run the Install_Workflow notebook after the Producer notebook has completed its first run. This will create and start a workflow named `Game_Protobufs_wrapper_<your name>`. Note: the initial run may result in failures (if reading from Kafka). This is because the bronze table may not yet exist. The Workflow's tasks will retry, however, and then the tasks should proceed.
+5. In the Producer notebook, you can re-run the cell with the title "Send simulated payload messages to Kafka" to send more messages. Do not re-run the entire notebook.
+6. Optional: explore the "Unity Catalog Grants" notebook. You will need another user to which you can explore granting SELECT permission to one of the game tables.
 
 ### Clean up
 1. Stop and delete the Workflow

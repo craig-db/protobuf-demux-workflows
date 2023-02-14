@@ -11,25 +11,24 @@
 
 # COMMAND ----------
 
-# MAGIC %run "./Secrets"
-
-# COMMAND ----------
-
 # MAGIC %run "./Common"
 
 # COMMAND ----------
 
+# DBTITLE 1,Create widgets for the Workflow composition
 dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="30", choices=["3", "10", "20", "30", "40"])
 dbutils.widgets.dropdown(name="destination", label="Stream Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
+dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint", defaultValue="No", choices=["Yes", "No"])
 
 # COMMAND ----------
 
 tables_per_deserializer = int(dbutils.widgets.get("tables_per_deserializer"))
+reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 MODE = dbutils.widgets.get("destination")
 
 # COMMAND ----------
 
-# DBTITLE 1,The Workflow name will be "Game_Protobufs_wrapper_<your username>"
+# DBTITLE 1,The Workflow name will be "Game_Protobufs_wrapper_<your username>". Note: you will get an email if the workflow fails or is killed.
 my_name = spark.sql("select current_user()").collect()[0][0]
 FAILURE_EMAIL = my_name
 my_name = my_name[:my_name.rfind('@')].replace(".", "_")
@@ -42,6 +41,7 @@ games = [x[0] for x in spark.sql(f"select distinct game_name from {catalog}.{sch
 
 # COMMAND ----------
 
+# DBTITLE 1,Divvy up the various "game" streams into a smaller subset of clusters
 game_groups = list()
 while (len(games) > 0):
   game_groups.append(games[: (min(tables_per_deserializer, len(games)))])
@@ -62,7 +62,6 @@ nb_context = dbutils.entry_point.getDbutils().notebook().getContext()
 
 # COMMAND ----------
 
-#Intitialize Client
 api_client = ApiClient(token = nb_context.apiToken().get(), host = nb_context.apiUrl().get())
 jobs_api = JobsApi(api_client)
 
@@ -74,7 +73,9 @@ wrapper_nb_path = nb_context.notebookPath().getOrElse(None).replace("Install_Wor
 
 # COMMAND ----------
 
+# A workflow task per game
 tasks_configs = list()
+# Smaller set of clusters on which those tasks will run
 cluster_configs = list()
 
 # COMMAND ----------
@@ -88,7 +89,7 @@ for cluster_id in range(0, num_deserializer_clusters):
               "notebook_path": f"{deser_nb_path}",
               "base_parameters": {
                   "game_name": f"{game_name}",
-                  "reset_checkpoint": "Yes"
+                  "reset_checkpoint": f"{reset_checkpoint}"
               },
               "source": "WORKSPACE"
           },
@@ -124,8 +125,8 @@ for cluster_id in range(0, num_deserializer_clusters):
                   "spot_bid_price_percent": 100,
                   "ebs_volume_count": 0
               },
-              "node_type_id": "m5d.xlarge",
-              "driver_node_type_id": "m5d.xlarge",
+              "node_type_id": "c6gd.2xlarge",
+              "driver_node_type_id": "c6gd.2xlarge",
               "custom_tags": {
                   "ResourceClass": "SingleNode"
               },
@@ -134,7 +135,7 @@ for cluster_id in range(0, num_deserializer_clusters):
               },
               "enable_elastic_disk": True,
               "data_security_mode": "SINGLE_USER",
-              "runtime_engine": "PHOTON",
+              "runtime_engine": "STANDARD",
               "num_workers": 0
           }
       }  
@@ -143,6 +144,7 @@ for cluster_id in range(0, num_deserializer_clusters):
 
 # COMMAND ----------
 
+# DBTITLE 1,The Workflow settings
 job_settings = {
     "run_as_owner": True,
     "settings": {
@@ -157,7 +159,8 @@ job_settings = {
                     "notebook_path": f"{wrapper_nb_path}",
                     "source": "WORKSPACE",
                     "base_parameters": {
-                      "source": f"{MODE}"
+                      "source": f"{MODE}",
+                      "reset_checkpoint": f"{reset_checkpoint}"
                     },
                 },
                 "job_cluster_key": "KafkaConsumer_job_cluster_0",
@@ -189,8 +192,8 @@ job_settings = {
                         "spot_bid_price_percent": 100,
                         "ebs_volume_count": 0
                     },
-                    "node_type_id": "m5d.xlarge",
-                    "driver_node_type_id": "m5d.xlarge",
+                    "node_type_id": "c6gd.2xlarge",
+                    "driver_node_type_id": "c6gd.2xlarge",
                     "custom_tags": {
                         "ResourceClass": "SingleNode"
                     },
@@ -199,7 +202,7 @@ job_settings = {
                     },
                     "enable_elastic_disk": True,
                     "data_security_mode": "SINGLE_USER",
-                    "runtime_engine": "PHOTON",
+                    "runtime_engine": "STANDARD",
                     "num_workers": 0
                 }
             }            
@@ -210,6 +213,7 @@ job_settings = {
 
 # COMMAND ----------
 
+# DBTITLE 1,Review the workflow JSON configuration
 import json
 print(json.dumps(job_settings, indent=4))
 
@@ -224,8 +228,5 @@ print(retval)
 
 # COMMAND ----------
 
+# DBTITLE 1,Run the workflow
 print(jobs_api.run_now(retval["job_id"], jar_params=None, notebook_params=None, python_params=None, spark_submit_params=None))
-
-# COMMAND ----------
-
-

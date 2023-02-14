@@ -11,6 +11,7 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Create widgets for the producer (simulator) variables
 vdd = [str(i) for i in range(5, 100, 5)]
 ndd = [str(i) for i in range(5, 250, 5)]
 nrec = [str(i) for i in range(10, 1110, 10)]
@@ -22,7 +23,7 @@ dbutils.widgets.dropdown(name="clean_up", label="clean_up", defaultValue="No", c
 
 # COMMAND ----------
 
-# DBTITLE 1,Variables for the producer
+# DBTITLE 1,Retrieve widget values
 NUM_VERSIONS=int(dbutils.widgets.get("num_versions"))
 NUM_RECORDS_PER_VERSION=int(dbutils.widgets.get("num_records"))
 NUM_TARGET_TABLES=int(dbutils.widgets.get("num_destinations"))
@@ -32,6 +33,7 @@ print(f"This run will produce {NUM_RECORDS_PER_VERSION} messages for each of the
 
 # COMMAND ----------
 
+# DBTITLE 1,Set up target Catalog and Schema (clean up, if needed)
 if CLEAN_UP == "Yes":
   print("Dropping catalog")
   spark.sql(f"drop catalog if exists {catalog} cascade")
@@ -58,10 +60,12 @@ fake = Faker()
 
 # COMMAND ----------
 
+# DBTITLE 1,Each game name will be generated using Faker's first_name() function
 GAMES_ARRAY = [f"{str(fake.first_name()).lower()}_game" for i in range(0, NUM_TARGET_TABLES)] if len(GAMES_ARRAY) == 0 else GAMES_ARRAY
 
 # COMMAND ----------
 
+# DBTITLE 1,Checkpoint setting is used for the sink to ensure the stream can be restarted
 print(f"CHECKPOINT_LOCATION: {CHECKPOINT_LOCATION}")
 
 # COMMAND ----------
@@ -78,15 +82,13 @@ admin_client = AdminClient(kafka_config)
 
 # COMMAND ----------
 
+# DBTITLE 1,Clean up topics and schemas (if needed)
 if CLEAN_UP == "Yes":
   schema_registry_client = SchemaRegistryClient(schema_registry_conf)
   subjects = schema_registry_client.get_subjects()
   for subject in subjects:
     schema_registry_client.delete_subject(subject, True)
-
-# COMMAND ----------
-
-if CLEAN_UP == "Yes":
+    
   t_dict = admin_client.list_topics()
   t_topics = t_dict.topics
   t_list = [key for key in t_topics]
@@ -140,19 +142,27 @@ print(wrapper_schema_id)
 
 # COMMAND ----------
 
+"""
+Build the inner payload
+"""
 def get_inner_records(game_name, num_records, num_versions):
   print(f"Generating DF for {game_name}")
   records = []
+  
+  # Spark schema
   schema_arr = [f"game_name: STRING", "user_name: STRING", 
                 "event_timestamp: TIMESTAMP", "is_connection_stable: BOOLEAN"]
+  # Protobuf schema
   proto_schema_arr = ["string game_name =1;", "string user_name =2;", 
                       "google.protobuf.Timestamp event_timestamp =3;", 
                       "bool is_connection_stable =4;"]
-  
+
+  # To simulate schema evolution, newer versions get an additional column added
   for v in range(0, num_versions):
     schema_arr.append(f"col_{game_name}_{v}: STRING") 
     proto_schema_arr.append(f"optional string col_{game_name}_{v} ={int(v + 5)};") 
 
+  # Construct the final protobuf schema definition
   proto_schema_str = str("\n".join(proto_schema_arr))
   proto_schema_str = f"""syntax = "proto3";
      import 'google/protobuf/timestamp.proto';
@@ -161,13 +171,16 @@ def get_inner_records(game_name, num_records, num_versions):
        {proto_schema_str}
      }}
   """
+  
+  # Register the topic and schema with Confluent
   if proto_schema_str not in REGISTERED_SCHEMAS:
     if game_name not in REGISTERED_TOPICS:
       register_topic(game_name)
       REGISTERED_TOPICS[game_name] = True
     schema_id = register_schema(game_name, proto_schema_str)
     REGISTERED_SCHEMAS[proto_schema_str] = schema_id  
-  
+
+  # Generate some fake data
   for r in range(0, num_records):
     user_name = fake.user_name()
     record = {
@@ -175,24 +188,21 @@ def get_inner_records(game_name, num_records, num_versions):
         "game_name": game_name,
         "user_name": user_name,
         "event_timestamp": datetime.now(),
-        "is_connection_stable" : False if user_name[0] == "c" else True
+        "is_connection_stable" : (user_name[0] == "c")
       }
     }
+    # Fake data for the "evolved" versions of the schema:
     for v in range(0, num_versions):
       record["event"][f"col_{game_name}_{v}"] = f"custom_{game_name}_{v}_{r}"
       
     record["schema_id"] = REGISTERED_SCHEMAS[proto_schema_str]
 
     records.append(record)
-    
+  
+  # Construct the final Spark schema
   schema_str = ", ".join(schema_arr)
+
   return spark.createDataFrame(records, f"schema_id INTEGER, event STRUCT<{schema_str}>")
-
-# COMMAND ----------
-
-# Protobuf is already compressed (note: we're assuming uncompressed parquet with protobuf
-# contents is faster. To be sure, perform some benchmarking!)
-spark.conf.set("spark.sql.parquet.compression.codec", "uncompressed")
 
 # COMMAND ----------
 
@@ -200,13 +210,15 @@ latest_version = 0
 
 # COMMAND ----------
 
-# DBTITLE 1,Send simulated payload messages (with evolving schema) to Kafka
+# DBTITLE 1,Send simulated payload messages to Kafka
 for version in range(1, NUM_VERSIONS):
-  for target in range(1, NUM_TARGET_TABLES): # Starting at 1 because Confluent is free for 10 partitions; one needed for wrapper topic/schema
+  # Starting at 1 because Confluent is free for 10 partitions; one partition is needed for the wrapper topic/schema
+  for target in range(1, NUM_TARGET_TABLES): 
     latest_version = max(version, latest_version)
     print(latest_version)
     sr_conf = schema_registry_options.copy()
 
+    # Construct inner payload
     sr_conf["schema.registry.subject"] = f"{GAMES_ARRAY[target]}-value"
     df = get_inner_records(GAMES_ARRAY[target], NUM_RECORDS_PER_VERSION, latest_version)
     df = df.withColumn("game_name", col("event.game_name"))
@@ -214,10 +226,14 @@ for version in range(1, NUM_VERSIONS):
     df = df.selectExpr("game_name", "struct(game_name, schema_id, payload) as inner_payload")
     df.printSchema()
     
+    # Construct wrapper payload
     sr_conf["schema.registry.subject"] = f"{WRAPPER_TOPIC}-value"
     df = df.withColumn("wrapper", to_protobuf("inner_payload", options = sr_conf))
     df = df.select(["game_name", "wrapper"])
+    
     df.printSchema()
+    # This simulator writes to Delta first and then writes that content to Kafka. This is because
+    # the simulator can run in "Destination" MODE of Kafka or Delta. 
     (df
        .write
        .format("delta")
@@ -237,7 +253,9 @@ for version in range(1, NUM_VERSIONS):
          .option("topic", WRAPPER_TOPIC)
          .option("kafka.bootstrap.servers", KAFKA_SERVER)
          .option("kafka.security.protocol", "SASL_SSL")
-         .option("kafka.sasl.jaas.config", "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{}' password='{}';".format(KAFKA_KEY, KAFKA_SECRET))
+         .option("kafka.sasl.jaas.config", 
+                 "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{}' password='{}';".format(
+                   KAFKA_KEY, KAFKA_SECRET))
          .option("kafka.ssl.endpoint.identification.algorithm", "https")
          .option("kafka.sasl.mechanism", "PLAIN")
          .trigger(availableNow=True)
@@ -246,8 +264,10 @@ for version in range(1, NUM_VERSIONS):
 
 # COMMAND ----------
 
+# Inspect the wrapper payload
 display(spark.sql(f"select * from {catalog}.{schema}.wrapper"))
 
 # COMMAND ----------
 
+# Check how many messages per game have been constructed and sent
 display(spark.sql(f"select game_name, count(*) from {catalog}.{schema}.wrapper group by game_name"))
