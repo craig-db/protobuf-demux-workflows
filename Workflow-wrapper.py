@@ -3,20 +3,16 @@
 
 # COMMAND ----------
 
-my_name = spark.sql("select current_user()").collect()[0][0]
-my_name = my_name[:my_name.rfind('@')].replace(".", "_")
-default_schema = f"{my_name}_demux_example"
+# MAGIC %run "./Common"
 
 # COMMAND ----------
 
-dbutils.widgets.text(name="target_schema", label="target_schema", defaultValue=default_schema)
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint_drop_destination", defaultValue="No", choices=["Yes", "No"])
 dbutils.widgets.dropdown(name="starting_offset", label="starting_offset", defaultValue="earliest", choices=["earliest", "latest"])
 dbutils.widgets.dropdown(name="source", label="Source", defaultValue="Delta", choices=["Delta", "Kafka"])
 
 # COMMAND ----------
 
-target_schema = dbutils.widgets.get("target_schema")
 reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 starting_offset = dbutils.widgets.get("starting_offset")
 source = dbutils.widgets.get("source")
@@ -29,7 +25,7 @@ checkpoint_location = f"{CHECKPOINT_LOCATION}/wrapper_checkpoint"
 
 if reset_checkpoint == "Yes":
   print("cleaning checkpoints and destination table")
-  spark.sql(f"drop table if exists {target_schema}.bronze_protobufs_wf")
+  spark.sql(f"drop table if exists {catalog}.{schema}.bronze_protobufs_wf")
   dbutils.fs.rm(checkpoint_location, True)
 
 # COMMAND ----------
@@ -104,8 +100,8 @@ bronze_df.printSchema()
    .partitionBy("game_name")
    .option("checkpointLocation", checkpoint_location)
    .outputMode("append")
-   .queryName(f"from_protobuf bronze_df into {target_schema}")
-   .toTable(f"{target_schema}.bronze_protobufs_wf")
+   .queryName(f"from_protobuf bronze_df into {schema}")
+   .toTable(f"{catalog}.{schema}.bronze_protobufs_wf")
 )
 
 # COMMAND ----------

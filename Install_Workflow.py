@@ -15,6 +15,10 @@
 
 # COMMAND ----------
 
+# MAGIC %run "./Common"
+
+# COMMAND ----------
+
 dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="30", choices=["3", "10", "20", "30", "40"])
 dbutils.widgets.dropdown(name="destination", label="Stream Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
 
@@ -34,11 +38,7 @@ WRAPPER_WORKFLOW_NAME = f"Game_Protobufs_wrapper_{my_name}"
 
 # COMMAND ----------
 
-TARGET_SCHEMA = f"{my_name}_demux_example"
-
-# COMMAND ----------
-
-games = [x[0] for x in spark.sql(f"select distinct game_name from {TARGET_SCHEMA}.wrapper").collect()]
+games = [x[0] for x in spark.sql(f"select distinct game_name from {catalog}.{schema}.wrapper").collect()]
 
 # COMMAND ----------
 
@@ -162,7 +162,7 @@ job_settings = {
                 },
                 "job_cluster_key": "KafkaConsumer_job_cluster_0",
                 "max_retries": 2,
-                "min_retry_interval_millis": 900000,
+                "min_retry_interval_millis": 30000,
                 "retry_on_timeout": False,
                 "timeout_seconds": 0,
                 "email_notifications": {

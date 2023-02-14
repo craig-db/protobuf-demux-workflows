@@ -7,16 +7,17 @@
 
 # COMMAND ----------
 
-my_name = spark.sql("select current_user()").collect()[0][0]
-my_name = my_name[:my_name.rfind('@')].replace(".", "_")
-schema = f"{my_name}_demux_example"
-print(f"Schema used (if in Delta mode): {schema}")
+# MAGIC %run "./Secrets"
+
+# COMMAND ----------
+
+# MAGIC %run "./Common"
 
 # COMMAND ----------
 
 vdd = [str(i) for i in range(5, 100, 5)]
 ndd = [str(i) for i in range(5, 250, 5)]
-nrec = [str(i) for i in range(10, 110, 10)]
+nrec = [str(i) for i in range(10, 1110, 10)]
 dbutils.widgets.dropdown(name="num_destinations", label="Number of Target Delta tables", defaultValue="5", choices=ndd)
 dbutils.widgets.dropdown(name="num_versions", label="Number of Versions to Produce", defaultValue="5", choices=vdd)
 dbutils.widgets.dropdown(name="num_records", label="Number of Records to Produce per Version", defaultValue="10", choices=nrec)
@@ -36,8 +37,11 @@ print(f"This run will produce {NUM_RECORDS_PER_VERSION} messages for each of the
 # COMMAND ----------
 
 if CLEAN_UP == "Yes":
-  spark.sql(f"drop database if exists {schema} cascade")
-  spark.sql(f"create database {schema}")
+  print("Dropping catalog")
+  spark.sql(f"drop catalog if exists {catalog} cascade")
+  
+spark.sql(f"create catalog if not exists {catalog}")
+spark.sql(f"create database if not exists {catalog}.{schema}")
 
 # COMMAND ----------
 
@@ -59,24 +63,6 @@ fake = Faker()
 # COMMAND ----------
 
 GAMES_ARRAY = [f"{str(fake.first_name()).lower()}_game" for i in range(0, NUM_TARGET_TABLES)] if len(GAMES_ARRAY) == 0 else GAMES_ARRAY
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Create a notebook "Secrets" and set these variables:
-# MAGIC * SR_URL="https://setme.confluent.cloud"
-# MAGIC * SR_API_KEY="setme"
-# MAGIC * SR_API_SECRET="setme"
-# MAGIC * KAFKA_KEY="setme"
-# MAGIC * KAFKA_SECRET="setme"
-# MAGIC * KAFKA_SERVER="setme.confluent.cloud:9092"
-# MAGIC * KAFKA_TOPIC = "app-events"
-# MAGIC * WRAPPER_TOPIC = "wrapper"
-
-# COMMAND ----------
-
-# DBTITLE 1,Get Confluent Registry and Kafka related secrets
-# MAGIC %run "./Secrets"
 
 # COMMAND ----------
 
@@ -231,7 +217,7 @@ def get_inner_records(game_name, num_records, num_versions):
 
 # DBTITLE 1,Send simulated payload messages (with evolving schema) to Kafka
 for version in range(1, NUM_VERSIONS):
-  for target in range(0, NUM_TARGET_TABLES):
+  for target in range(1, NUM_TARGET_TABLES): # Starting at 1 because Confluent is free for 10 partitions; one needed for wrapper topic/schema
     print(version)
     sr_conf = schema_registry_options.copy()
 
@@ -250,11 +236,11 @@ for version in range(1, NUM_VERSIONS):
        .format("delta")
        .mode("append")
        .partitionBy("game_name")
-       .saveAsTable(f"{schema}.wrapper")
+       .saveAsTable(f"{catalog}.{schema}.wrapper")
     )
     if MODE == "Kafka":
       print("publishing to Kafka")
-      df = spark.readStream.table(f"{schema}.wrapper")
+      df = spark.readStream.table(f"{catalog}.{schema}.wrapper")
       (df
          .selectExpr("game_name as key", "CAST(wrapper AS STRING) as value")
          .writeStream
@@ -273,8 +259,8 @@ for version in range(1, NUM_VERSIONS):
 
 # COMMAND ----------
 
-display(spark.sql(f"select * from {schema}.wrapper"))
+display(spark.sql(f"select * from {catalog}.{schema}.wrapper"))
 
 # COMMAND ----------
 
-display(spark.sql(f"select game_name, count(*) from {schema}.wrapper group by game_name"))
+display(spark.sql(f"select game_name, count(*) from {catalog}.{schema}.wrapper group by game_name"))

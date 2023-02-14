@@ -3,19 +3,15 @@
 
 # COMMAND ----------
 
-my_name = spark.sql("select current_user()").collect()[0][0]
-my_name = my_name[:my_name.rfind('@')].replace(".", "_")
-default_schema = f"{my_name}_demux_example"
+# MAGIC %run "./Common"
 
 # COMMAND ----------
 
 dbutils.widgets.text(name="game_name", label="game_name", defaultValue="kimberly_game")
-dbutils.widgets.text(name="target_schema", label="target_schema", defaultValue=default_schema)
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint_drop_destination", defaultValue="No", choices=["Yes", "No"])
 
 # COMMAND ----------
 
-target_schema = dbutils.widgets.get("target_schema")
 reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 game_name = dbutils.widgets.get("game_name")
 
@@ -50,7 +46,7 @@ kafka_config = {
 
 if reset_checkpoint == "Yes":
   print("cleaning checkpoints and destination table")
-  spark.sql(f"drop table if exists {target_schema}.silver_{game_name}_wf")
+  spark.sql(f"drop table if exists {catalog}.{schema}.silver_{game_name}_wf")
   dbutils.fs.rm(checkpoint_location, True)
 
 # COMMAND ----------
@@ -65,7 +61,7 @@ silver_df = (
   spark
   .readStream
   .format("delta")
-  .table(f"{target_schema}.bronze_protobufs_wf")
+  .table(f"{catalog}.{schema}.bronze_protobufs_wf")
   .filter(col("game_name") == game_name)
   .withColumn("silver_deser_timestamp", lit(current_timestamp()))
   .select("silver_deser_timestamp", from_protobuf("payload", options = schema_registry_options).alias("payload"))
@@ -84,6 +80,6 @@ silver_df.printSchema()
    .format("delta")
    .option("checkpointLocation", checkpoint_location)
    .outputMode("append")
-   .queryName(f"from_protobuf silver_df into {target_schema}.{game_name}")
-   .toTable(f"{target_schema}.silver_{game_name}_wf")
+   .queryName(f"from_protobuf silver_df into {catalog}.{schema}.{game_name}")
+   .toTable(f"{catalog}.{schema}.silver_{game_name}_wf")
 )
