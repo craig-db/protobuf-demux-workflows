@@ -50,7 +50,8 @@ silver_df = (
   .table(f"{catalog}.{schema}.bronze_protobufs_wf")
   .filter(col("game_name") == game_name)
   .withColumn("silver_deser_timestamp", lit(current_timestamp()))
-  .select("silver_deser_timestamp", from_protobuf("payload", options = schema_registry_options).alias("payload"))
+  .select("silver_deser_timestamp", 
+          from_protobuf("payload", options = schema_registry_options).alias("payload"))
 )
   
 silver_df = silver_df.select("silver_deser_timestamp", "payload.*")

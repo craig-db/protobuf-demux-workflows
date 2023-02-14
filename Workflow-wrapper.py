@@ -57,7 +57,8 @@ if source == "Kafka":
       .option("mergeSchema", "true")
       .load()
       .withColumn("wrapper_deser_timestamp", lit(current_timestamp()))
-      .select("wrapper_deser_timestamp", from_protobuf("value", options = schema_registry_options).alias("wrapper"))
+      .select("wrapper_deser_timestamp", 
+              from_protobuf("value", options = schema_registry_options).alias("wrapper"))
   )
 else:
   bronze_df = (
