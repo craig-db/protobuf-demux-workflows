@@ -14,7 +14,7 @@
 # DBTITLE 1,Create widgets for the producer (simulator) variables
 vdd = [str(i) for i in range(5, 100, 5)]
 ndd = [str(i) for i in range(5, 250, 5)]
-nrec = [str(i) for i in range(10, 1110, 10)]
+nrec = [str(i) for i in range(10, 100000, 1000)]
 dbutils.widgets.dropdown(name="num_destinations", label="Number of Target Delta tables", defaultValue="5", choices=ndd)
 dbutils.widgets.dropdown(name="num_versions", label="Number of Versions to Produce", defaultValue="5", choices=vdd)
 dbutils.widgets.dropdown(name="num_records", label="Number of Records to Produce per Version", defaultValue="10", choices=nrec)
@@ -50,10 +50,11 @@ REGISTERED_TOPICS = {}
 # COMMAND ----------
 
 from faker import Faker
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, lit, udf, current_timestamp, concat_ws
 from pyspark.sql.protobuf.functions import to_protobuf
 from pyspark.sql.types import BinaryType
 from datetime import datetime
+import random 
 
 Faker.seed(999)
 fake = Faker()
@@ -147,11 +148,7 @@ Build the inner payload
 """
 def get_inner_records(game_name, num_records, num_versions):
   print(f"Generating DF for {game_name}")
-  records = []
-  
-  # Spark schema
-  schema_arr = [f"game_name: STRING", "user_name: STRING", 
-                "event_timestamp: TIMESTAMP", "is_connection_stable: STRING"]
+
   # Protobuf schema
   proto_schema_arr = ["string game_name =1;", "string user_name =2;", 
                       "google.protobuf.Timestamp event_timestamp =3;", 
@@ -159,7 +156,6 @@ def get_inner_records(game_name, num_records, num_versions):
 
   # To simulate schema evolution, newer versions get an additional column added
   for v in range(0, num_versions):
-    schema_arr.append(f"col_{game_name}_{v}: STRING") 
     proto_schema_arr.append(f"optional string col_{game_name}_{v} ={int(v + 5)};") 
 
   # Construct the final protobuf schema definition
@@ -180,32 +176,22 @@ def get_inner_records(game_name, num_records, num_versions):
     schema_id = register_schema(game_name, proto_schema_str)
     REGISTERED_SCHEMAS[proto_schema_str] = schema_id  
 
-  # Generate some fake data
-  for r in range(0, num_records):
-    user_name = fake.user_name()
-    is_stable = "Y"
-    if (user_name[0] == "c"):
-        is_stable = "N"
-    record = {
-      "event" : {
-        "game_name": game_name,
-        "user_name": user_name,
-        "event_timestamp": datetime.now(),
-        "is_connection_stable" : is_stable
-      }
-    }
-    # Fake data for the "evolved" versions of the schema:
-    for v in range(0, num_versions):
-      record["event"][f"col_{game_name}_{v}"] = f"custom_{game_name}_{v}_{r}"
-      
-    record["schema_id"] = REGISTERED_SCHEMAS[proto_schema_str]
+  df = spark.range(0, num_records)
+  fake_username = udf(fake.user_name)
+  stable = udf(lambda:random.choices(["Y", "N"], weights = [95, 5])[0])
+  df = df.withColumn("game_name", lit(game_name))
+  df = df.withColumn("user_name", fake_username())
+  df = df.withColumn("event_timestamp", current_timestamp())
+  df = df.withColumn("is_connection_stable", stable())
+  for v in range(0, num_versions):
+    df = df.withColumn(f"col_{game_name}_{v}", concat_ws("_", lit(f"custom_{game_name}"), col("id")))
+  df = df.withColumn("schema_id", lit(REGISTERED_SCHEMAS[proto_schema_str]))
 
-    records.append(record)
-  
-  # Construct the final Spark schema
-  schema_str = ", ".join(schema_arr)
+  df = df.selectExpr("schema_id", "struct(*) as event")
+  df = df.withColumn("event", df["event"].dropFields("schema_id"))
+  df = df.withColumn("event", df["event"].dropFields("id"))
 
-  return spark.createDataFrame(records, f"schema_id INTEGER, event STRUCT<{schema_str}>")
+  return df
 
 # COMMAND ----------
 
@@ -218,7 +204,7 @@ for version in range(1, NUM_VERSIONS):
   # Starting at 1 because Confluent is free for 10 partitions; one partition is needed for the wrapper topic/schema
   for target in range(1, NUM_TARGET_TABLES): 
     latest_version = max(version, latest_version)
-    print(latest_version)
+    print(f"Schema Version: {latest_version}")
     sr_conf = schema_registry_options.copy()
 
     # Construct inner payload
@@ -227,14 +213,14 @@ for version in range(1, NUM_VERSIONS):
     df = df.withColumn("game_name", col("event.game_name"))
     df = df.withColumn("payload", to_protobuf("event", options = sr_conf))
     df = df.selectExpr("game_name", "struct(game_name, schema_id, payload) as inner_payload")
-    df.printSchema()
+    # df.printSchema()
     
     # Construct wrapper payload
     sr_conf["schema.registry.subject"] = f"{WRAPPER_TOPIC}-value"
     df = df.withColumn("wrapper", to_protobuf("inner_payload", options = sr_conf))
     df = df.select(["game_name", "wrapper"])
     
-    df.printSchema()
+    # df.printSchema()
     # This simulator writes to Delta first and then writes that content to Kafka. This is because
     # the simulator can run in "Destination" MODE of Kafka or Delta. 
     (df
@@ -245,7 +231,7 @@ for version in range(1, NUM_VERSIONS):
        .saveAsTable(f"{catalog}.{schema}.wrapper")
     )
     if MODE == "Kafka":
-      print("publishing to Kafka")
+      # print("publishing to Kafka")
       df = spark.readStream.table(f"{catalog}.{schema}.wrapper")
       (df
          .selectExpr("game_name as key", "CAST(wrapper AS STRING) as value")

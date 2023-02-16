@@ -8,6 +8,9 @@
 # MAGIC # Important
 # MAGIC 1. Run the Producer notebook before running this notebook. The Producer will set up the game names. Those are needed so that the destination tables can be deteremined and the workflow tasks can be created.
 # MAGIC 2. Run this notebook cell-by-cell. Widgets will appear that will allow you to set the source for the stream (Delta or Kafka) as well as the number of streams per cluster. The job consuming the main stream will have its own cluster.
+# MAGIC 
+# MAGIC ### Cluster
+# MAGIC This is a prototype. The clusters being spun up are single-node. For production or workloads with scale, edit the JSON to allocate more cluster resources.
 
 # COMMAND ----------
 
