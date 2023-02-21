@@ -65,7 +65,7 @@ else:
     spark
     .readStream
     .format("delta")
-    .table(f"{target_schema}.wrapper")
+    .table(f"{catalog}.{schema}.wrapper")
     .withColumn("wrapper_deser_timestamp", lit(current_timestamp()))
     .select("wrapper_deser_timestamp", from_protobuf("wrapper", options = schema_registry_options).alias("wrapper"))
   )
