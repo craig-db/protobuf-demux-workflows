@@ -67,6 +67,7 @@ silver_df.printSchema()
    .writeStream
    .format("delta")
    .option("checkpointLocation", checkpoint_location)
+   .option("mergeSchema", "true")
    .outputMode("append")
    .queryName(f"from_protobuf silver_df into {catalog}.{schema}.{game_name}")
    .toTable(f"{catalog}.{schema}.silver_{game_name}_wf")
