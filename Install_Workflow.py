@@ -19,13 +19,11 @@
 # COMMAND ----------
 
 # DBTITLE 1,Create widgets for the Workflow composition
-dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="30", choices=["3", "10", "20", "30", "40"])
 dbutils.widgets.dropdown(name="destination", label="Stream Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint", defaultValue="No", choices=["Yes", "No"])
 
 # COMMAND ----------
 
-tables_per_deserializer = int(dbutils.widgets.get("tables_per_deserializer"))
 reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 MODE = dbutils.widgets.get("destination")
 
@@ -44,18 +42,6 @@ games = [x[0] for x in spark.sql(f"select distinct game_name from {catalog}.{sch
 
 # COMMAND ----------
 
-# DBTITLE 1,Divvy up the various "game" streams into a smaller subset of clusters
-game_groups = list()
-while (len(games) > 0):
-  game_groups.append(games[: (min(tables_per_deserializer, len(games)))])
-  del games[: (min(tables_per_deserializer, len(games)))]
-
-# COMMAND ----------
-
-num_deserializer_clusters = len(game_groups)
-
-# COMMAND ----------
-
 from databricks_cli.sdk.api_client import ApiClient
 from databricks_cli.jobs.api import JobsApi
 
@@ -71,79 +57,7 @@ jobs_api = JobsApi(api_client)
 # COMMAND ----------
 
 # DBTITLE 1,Build the path to the Workflow's notebook by using the path of this notebook
-deser_nb_path = nb_context.notebookPath().getOrElse(None).replace("Install_Workflow", "Workflow-deserializer")
 wrapper_nb_path = nb_context.notebookPath().getOrElse(None).replace("Install_Workflow", "Workflow-wrapper")
-
-# COMMAND ----------
-
-# A workflow task per game
-tasks_configs = list()
-# Smaller set of clusters on which those tasks will run
-cluster_configs = list()
-
-# COMMAND ----------
-
-for cluster_id in range(0, num_deserializer_clusters):
-  for game_name in game_groups[cluster_id]:
-    task_config = [
-      {
-          "task_key": f"deserializer_{game_name}",
-          "notebook_task": {
-              "notebook_path": f"{deser_nb_path}",
-              "base_parameters": {
-                  "game_name": f"{game_name}",
-                  "reset_checkpoint": f"{reset_checkpoint}"
-              },
-              "source": "WORKSPACE"
-          },
-          "job_cluster_key": f"Silver_job_cluster_{cluster_id+1}",
-          "max_retries": 2,
-          "min_retry_interval_millis": 30000,
-          "retry_on_timeout": False,
-          "timeout_seconds": 0,
-          "email_notifications": {
-              "on_failure": [
-                  f"{FAILURE_EMAIL}"
-              ]
-          }
-      }
-    ]
-  
-    tasks_configs = tasks_configs + task_config
-    
-  cluster_config = [
-    {
-          "job_cluster_key": f"Silver_job_cluster_{cluster_id+1}",
-          "new_cluster": {
-              "cluster_name": "",
-              "spark_version": "12.1.x-scala2.12",
-              "spark_conf": {
-                  "spark.master": "local[*, 4]",
-                  "spark.databricks.cluster.profile": "singleNode"
-              },
-              "aws_attributes": {
-                  "first_on_demand": 1,
-                  "availability": "SPOT_WITH_FALLBACK",
-                  "zone_id": "us-west-2a",
-                  "spot_bid_price_percent": 100,
-                  "ebs_volume_count": 0
-              },
-              "node_type_id": "c6gd.2xlarge",
-              "driver_node_type_id": "c6gd.2xlarge",
-              "custom_tags": {
-                  "ResourceClass": "SingleNode"
-              },
-              "spark_env_vars": {
-                  "PYSPARK_PYTHON": "/databricks/python3/bin/python3"
-              },
-              "enable_elastic_disk": True,
-              "data_security_mode": "SINGLE_USER",
-              "runtime_engine": "STANDARD",
-              "num_workers": 0
-          }
-      }  
-  ]
-  cluster_configs = cluster_configs + cluster_config
 
 # COMMAND ----------
 
@@ -155,7 +69,7 @@ job_settings = {
         "email_notifications": {
             "no_alert_for_skipped_runs": False
         },
-        "tasks": tasks_configs + [
+        "tasks": [
             {
                 "task_key": "kafka_consumer",
                 "notebook_task": {
@@ -163,7 +77,8 @@ job_settings = {
                     "source": "WORKSPACE",
                     "base_parameters": {
                       "source": f"{MODE}",
-                      "reset_checkpoint": f"{reset_checkpoint}"
+                      "reset_checkpoint": f"{reset_checkpoint}",
+                      "games": ",".join(games)
                     },
                 },
                 "job_cluster_key": "KafkaConsumer_job_cluster_0",
@@ -178,7 +93,7 @@ job_settings = {
                 }
             }
         ],
-        "job_clusters": cluster_configs + [
+        "job_clusters": [
             {
                 "job_cluster_key": "KafkaConsumer_job_cluster_0",
                 "new_cluster": {
