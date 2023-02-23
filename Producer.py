@@ -195,7 +195,8 @@ def get_inner_records(game_name, num_records, num_versions):
 
 # COMMAND ----------
 
-latest_version = 0
+# TODO Set to 0
+latest_version = 4
 
 # COMMAND ----------
 

@@ -17,7 +17,8 @@ schema_registry_options = {
   "schema.registry.subject" : f"{KAFKA_TOPIC}-value",
   "schema.registry.address" : f"{SR_URL}",
   "confluent.schema.registry.basic.auth.credentials.source" : "USER_INFO",
-  "confluent.schema.registry.basic.auth.user.info" : f"{SR_API_KEY}:{SR_API_SECRET}"
+  "confluent.schema.registry.basic.auth.user.info" : f"{SR_API_KEY}:{SR_API_SECRET}",
+  "schema.registry.schema.evolution.mode": "RESTART"
 }
 
 schema_registry_conf = {
