@@ -16,7 +16,6 @@ all_games_str = ",".join(all_games)
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint_drop_destination", defaultValue="No", choices=["Yes", "No"])
 dbutils.widgets.dropdown(name="starting_offset", label="starting_offset", defaultValue="earliest", choices=["earliest", "latest"])
 dbutils.widgets.dropdown(name="source", label="Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
-dbutils.widgets.dropdown(name="mode", label="Mode", defaultValue="SingleDestination", choices=["SingleDestination", "foreachBatch"])
 dbutils.widgets.text(name="games", label="Games(comma-sep)", defaultValue=all_games_str)
 
 # COMMAND ----------
@@ -26,7 +25,6 @@ reset_checkpoint = dbutils.widgets.get("reset_checkpoint")
 starting_offset = dbutils.widgets.get("starting_offset")
 source = dbutils.widgets.get("source")
 games_str = dbutils.widgets.get("games")
-mode = dbutils.widgets.get("mode")
 
 games = games_str.split(",")
 
@@ -38,12 +36,11 @@ deep_checkpoint_location = f"{CHECKPOINT_LOCATION}/deep_wrapper_checkpoint"
 
 # COMMAND ----------
 
+# DBTITLE 1,Clean up
 if reset_checkpoint == "Yes":
   print("cleaning checkpoints and destination table")
-  spark.sql(f"drop table if exists {catalog}.{schema}.bronze_protobufs_wf")
-  spark.sql(f"drop table if exists {catalog}.{schema}.deep_bronze_protobufs_wf")
+  spark.sql(f"drop table if exists {catalog}.{schema}.silver_onehop_wf")
   for game_name in games:
-    spark.sql(f"drop table if exists {catalog}.{schema}.silver_{game_name}_onehop_wf")
     spark.sql(f"drop view if exists {catalog}.{schema}.silver_view_{game_name}")
   dbutils.fs.rm(checkpoint_location, True)
   dbutils.fs.rm(deep_checkpoint_location, True)
@@ -99,74 +96,83 @@ bronze_df.printSchema()
 
 # COMMAND ----------
 
-# Used in foreachBatch "Mode" (not recommended; see comments)
+# This function is used in a foreachBatch. It "fans out" into a nested structure.
+# foreachBatch is not necessary. But without it, the job would fail when ever
+# any of the game protobuf schemas evolved! If schema evolution is very rare (or 
+# can be managed in a controlled way), then getting rid of the foreachBatch would 
+# likely speed things up. 
 def fan_out(bronze_df, batchId):
-  bronze_df.persist()  
+  bronze_df.persist()
   
-  # note this loop: within foreachBatch the code has to be single-threaded! Contrast 
-  # this with the other fan-out approach (multiple tasks) where you get parallelism 
-  # at the task & cluster level.
-  for game_name in games:
-    game_conf = schema_registry_options.copy()
-    game_conf["schema.registry.subject"] = f"{game_name}-value"
-    game_conf["schema.registry.schema.evolution.mode"] = "none"
-
-    (
-      # TODO: add filter
-      bronze_df
-       .select("wrapper_deser_timestamp", from_protobuf("payload", options = game_conf).alias("payload"))
-       .select("wrapper_deser_timestamp", "payload.*")
+  (
+    bronze_df
        .write
        .format("delta")
        .mode("append")
-       # Next two options help ensure idempotent writes
+       # These next two options help ensure idempotent updates
        .option("txnVersion", batchId)
        .option("txnAppId", "GAME_FAN_OUT")
-       .option("mode", "append")
        .option("mergeSchema", "true")
        .option("overwriteSchema", "true")
-       .saveAsTable(f"{catalog}.{schema}.silver_{game_name}_onehop_wf")
-    )
-
+       .saveAsTable(f"{catalog}.{schema}.silver_onehop_wf")
+  )
+  
   bronze_df.unpersist()
 
 # COMMAND ----------
 
 # DBTITLE 1,Save the inner protobuf payload into a bronze table
-if "mode" == "foreachBatch":
-  (
-    bronze_df
-      .writeStream
-      .option("checkpointLocation", checkpoint_location)
-      .foreachBatch(fan_out)
-      .start()
-  )
-else:
-  deep_bronze_df = None
-  for game_name in games:
-    game_conf = schema_registry_options.copy()
-    game_conf["schema.registry.subject"] = f"{game_name}-value"
-    inner_df = bronze_df.filter(col("game_name") == game_name).withColumn(game_name, from_protobuf(bronze_df["payload"], game_conf))
-    if deep_bronze_df != None:
-      deep_bronze_df = deep_bronze_df.unionByName(inner_df, True)
-    else:
-      deep_bronze_df = inner_df
-  
-  (deep_bronze_df
-     .writeStream
-     .format("delta")
-     .partitionBy("game_name")
-     .option("checkpointLocation", deep_checkpoint_location)
-     .outputMode("append")
-     .queryName(f"from_protobuf bronze_df into {schema}")
-     .toTable(f"{catalog}.{schema}.deep_bronze_protobufs_wf")
-  )                                                                               
+deep_bronze_df = None
+
+# Need to apply from_protobuf to the correct protobuf, hence the loop. Down side
+# of this: shuffle. The original approach (main branch) does not need to shuffle!
+for game_name in games:
+  game_conf = schema_registry_options.copy()
+  game_conf["schema.registry.subject"] = f"{game_name}-value"
+  inner_df = bronze_df.filter(col("game_name") == game_name).withColumn(game_name, from_protobuf(bronze_df["payload"], game_conf))
+  if deep_bronze_df != None:
+    deep_bronze_df = deep_bronze_df.unionByName(inner_df, True)
+  else:
+    deep_bronze_df = inner_df
+
+deep_bronze_df = deep_bronze_df.select(games + ["game_name"])
+    
+(deep_bronze_df
+   .writeStream
+   .option("checkpointLocation", deep_checkpoint_location)
+   .queryName(f"from_protobuf bronze_df into {schema}")
+   .foreachBatch(fan_out)
+   .start()
+)                                                                               
 
 # COMMAND ----------
 
-if mode == "SingleDestination":
+# The nested struct might take some time to get created. This function 
+# will help detect when the structure has all the games.
+def get_game_views():
+  views = list()
+  tables = [t['tableName'] for t in spark.sql(f"show tables in {catalog}.{schema}").collect()]
+  for table in tables:
+    if "silver_view" in table:
+      views.append(table.replace("silver_view_", "").replace("_wf", ""))
+  return views
+
+# COMMAND ----------
+
+# DBTITLE 1,Create a view for each game
+import time
+
+give_up_after_tries = 20
+attempt = 0
+
+# Let's wait for the stream to flow and create the deep nested structure before we create the views
+while set(games) != set(get_game_views()) and attempt < give_up_after_tries:
   for game_name in games:
-    spark.sql(f"create view if not exists {catalog}.{schema}.silver_view_{game_name} as select {game_name}.* from {catalog}.{schema}.deep_bronze_protobufs_wf where game_name = '{game_name}'")
+    try:
+      spark.sql(f"create view if not exists {catalog}.{schema}.silver_view_{game_name} as select {game_name}.* from {catalog}.{schema}.silver_onehop_wf where {game_name} is not null")
+    except Exception as e:
+      print(f"Failed to create silver_view_{game_name}. Expected (for some time...). Exception: {str(e)}")
+      time.sleep(90)
 
 # COMMAND ----------
 
