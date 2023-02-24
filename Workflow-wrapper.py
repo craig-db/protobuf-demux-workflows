@@ -108,6 +108,7 @@ def fan_out(bronze_df, batchId):
     bronze_df
        .write
        .format("delta")
+       .partitionBy("game_name")
        .mode("append")
        # These next two options help ensure idempotent updates
        .option("txnVersion", batchId)
@@ -169,7 +170,7 @@ attempt = 0
 while set(games) != set(get_game_views()) and attempt < give_up_after_tries:
   for game_name in games:
     try:
-      spark.sql(f"create view if not exists {catalog}.{schema}.silver_view_{game_name} as select {game_name}.* from {catalog}.{schema}.silver_onehop_wf where {game_name} is not null")
+      spark.sql(f"create view if not exists {catalog}.{schema}.silver_view_{game_name} as select {game_name}.* from {catalog}.{schema}.silver_onehop_wf where game_name = '{game_name}'")
     except Exception as e:
       print(f"Failed to create silver_view_{game_name}. Expected (for some time...). Exception: {str(e)}")
       time.sleep(90)
