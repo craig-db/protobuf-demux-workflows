@@ -50,11 +50,8 @@ silver_df = (
   .table(f"{catalog}.{schema}.bronze_protobufs_wf")
   .filter(col("game_name") == game_name)
   .withColumn("silver_deser_timestamp", lit(current_timestamp()))
-  .select("silver_deser_timestamp", 
-          from_protobuf("payload", options = schema_registry_options).alias("payload"))
+  .select("silver_deser_timestamp", "payload")
 )
-  
-silver_df = silver_df.select("silver_deser_timestamp", "payload.*")
 
 # COMMAND ----------
 
@@ -62,13 +59,34 @@ silver_df.printSchema()
 
 # COMMAND ----------
 
+# DBTITLE 1,foreachBatch -- allowing schema evolution without the need to restart the stream
+def append_updates(df, batchId):
+  df.persist()
+  
+  (
+    df.withColumn("payload", from_protobuf("payload", options = schema_registry_options).alias("payload"))
+       .select("silver_deser_timestamp", "payload.*")
+       .write
+       .format("delta")
+       .mode("append")
+       # These next two options help ensure idempotent updates
+       .option("txnVersion", batchId)
+       .option("txnAppId", "GAME_FAN_OUT")
+       .option("mergeSchema", "true")
+       .option("overwriteSchema", "true")
+       .saveAsTable(f"{catalog}.{schema}.silver_{game_name}_wf")
+  )
+  
+  df.unpersist()
+
+# COMMAND ----------
+
 # DBTITLE 1,Save as Delta (after deserializing the protobuf payload)
 (silver_df
    .writeStream
-   .format("delta")
    .option("checkpointLocation", checkpoint_location)
-   .option("mergeSchema", "true")
-   .outputMode("append")
    .queryName(f"from_protobuf silver_df into {catalog}.{schema}.{game_name}")
-   .toTable(f"{catalog}.{schema}.silver_{game_name}_wf")
+   .foreachBatch(append_updates)
+   .start()
 )
+
