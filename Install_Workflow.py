@@ -19,7 +19,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,Create widgets for the Workflow composition
-dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="30", choices=["3", "10", "20", "30", "40"])
+dbutils.widgets.dropdown(name="tables_per_deserializer", label="Streams per Cluster", defaultValue="3", choices=["3", "10", "20", "30", "40"])
 dbutils.widgets.dropdown(name="destination", label="Stream Source", defaultValue="Kafka", choices=["Delta", "Kafka"])
 dbutils.widgets.dropdown(name="reset_checkpoint", label="reset_checkpoint", defaultValue="No", choices=["Yes", "No"])
 
