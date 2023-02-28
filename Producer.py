@@ -204,7 +204,7 @@ NUM_VERSIONS
 # COMMAND ----------
 
 # DBTITLE 1,Send simulated payload messages to Kafka
-for version in range(1, NUM_VERSIONS + 1):
+for version in range(latest_version, NUM_VERSIONS + 1):
   # Starting at 1 because Confluent is free for 10 partitions; one partition is needed for the wrapper topic/schema
   for target in range(1, NUM_TARGET_TABLES): 
     latest_version = max(version, latest_version)
