@@ -104,8 +104,22 @@ bronze_df.printSchema()
 def fan_out(bronze_df, batchId):
   bronze_df.persist()
   
+  deep_bronze_df = None
+
+  # Need to apply from_protobuf to the correct protobuf, hence the loop.
+  for game_name in games:
+    game_conf = schema_registry_options.copy()
+    game_conf["schema.registry.subject"] = f"{game_name}-value"
+    inner_df = bronze_df.filter(col("game_name") == game_name).withColumn(game_name, from_protobuf(bronze_df["payload"], game_conf))
+    if deep_bronze_df != None:
+      deep_bronze_df = deep_bronze_df.unionByName(inner_df, True)
+    else:
+      deep_bronze_df = inner_df
+
+  deep_bronze_df = deep_bronze_df.select(games + ["game_name"])
+  
   (
-    bronze_df
+    deep_bronze_df
        .write
        .format("delta")
        .partitionBy("game_name")
@@ -123,22 +137,8 @@ def fan_out(bronze_df, batchId):
 # COMMAND ----------
 
 # DBTITLE 1,Save the inner protobuf payload into a bronze table
-deep_bronze_df = None
-
-# Need to apply from_protobuf to the correct protobuf, hence the loop. Down side
-# of this: shuffle. The original approach (main branch) does not need to shuffle!
-for game_name in games:
-  game_conf = schema_registry_options.copy()
-  game_conf["schema.registry.subject"] = f"{game_name}-value"
-  inner_df = bronze_df.filter(col("game_name") == game_name).withColumn(game_name, from_protobuf(bronze_df["payload"], game_conf))
-  if deep_bronze_df != None:
-    deep_bronze_df = deep_bronze_df.unionByName(inner_df, True)
-  else:
-    deep_bronze_df = inner_df
-
-deep_bronze_df = deep_bronze_df.select(games + ["game_name"])
-    
-(deep_bronze_df
+(
+  bronze_df
    .writeStream
    .option("checkpointLocation", deep_checkpoint_location)
    .queryName(f"from_protobuf bronze_df into {schema}")
@@ -177,4 +177,5 @@ while set(games) != set(get_game_views()) and attempt < give_up_after_tries:
 
 # COMMAND ----------
 
-
+# MAGIC %md
+# MAGIC ### Important: The views will need to be recreated after the schema evolves!
