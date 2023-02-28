@@ -12,7 +12,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,Create widgets for the producer (simulator) variables
-vdd = [str(i) for i in range(5, 100, 5)]
+vdd = ["1", "5", "10"]
 ndd = [str(i) for i in range(5, 250, 5)]
 nrec = [str(i) for i in range(10, 100000, 1000)]
 dbutils.widgets.dropdown(name="num_destinations", label="Number of Target Delta tables", defaultValue="5", choices=ndd)
@@ -195,8 +195,7 @@ def get_inner_records(game_name, num_records, num_versions):
 
 # COMMAND ----------
 
-# TODO Set to 0
-latest_version = 4
+latest_version = 0
 
 # COMMAND ----------
 
